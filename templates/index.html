@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AR Image Stitcher</title>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0f1117;
+      --surface:  #1a1d27;
+      --card:     #22263a;
+      --border:   #2e3350;
+      --accent1:  #6c63ff;
+      --accent2:  #a78bfa;
+      --text:     #e2e8f0;
+      --muted:    #6b7280;
+      --success:  #34d399;
+      --danger:   #f87171;
+      --radius:   12px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem 4rem;
+    }
+
+    /* ── Header ── */
+    header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+    header h1 {
+      font-size: 2.2rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--accent1), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    header p {
+      color: var(--muted);
+      margin-top: .4rem;
+      font-size: .95rem;
+    }
+
+    /* ── Main card ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 2rem;
+      width: 100%;
+      max-width: 900px;
+      margin-bottom: 1.5rem;
+    }
+    .card-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--accent2);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      margin-bottom: 1.2rem;
+    }
+
+    /* ── Loading overlay ── */
+    #loading-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(10, 11, 18, .82);
+      backdrop-filter: blur(4px);
+      z-index: 9999;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1.2rem;
+    }
+    #loading-overlay.active { display: flex; }
+    .big-spinner {
+      width: 56px;
+      height: 56px;
+      border: 5px solid rgba(167,139,250,.2);
+      border-top-color: var(--accent2);
+      border-radius: 50%;
+      animation: spin .9s linear infinite;
+    }
+    #loading-text {
+      color: var(--accent2);
+      font-size: 1.05rem;
+      font-weight: 600;
+    }
+    #loading-sub {
+      color: var(--muted);
+      font-size: .85rem;
+    }
+
+    /* ── Drop zone ── */
+    #drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 2.5rem 1.5rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+      position: relative;
+    }
+    #drop-zone:hover,
+    #drop-zone.drag-over {
+      border-color: var(--accent1);
+      background: rgba(108,99,255,.06);
+    }
+    #drop-zone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+    .drop-icon {
+      font-size: 2.5rem;
+      margin-bottom: .6rem;
+    }
+    #drop-zone p {
+      color: var(--muted);
+      font-size: .9rem;
+    }
+    #drop-zone strong {
+      color: var(--accent2);
+    }
+
+    /* ── Image grid ── */
+    #image-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      gap: 1rem;
+      margin-top: 1.5rem;
+    }
+    #image-grid:empty { display: none; }
+
+    .thumb-item {
+      position: relative;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 2px solid var(--border);
+      cursor: grab;
+      transition: transform .15s, border-color .15s, box-shadow .15s;
+      aspect-ratio: 1 / 1;
+      background: var(--card);
+      user-select: none;
+    }
+    .thumb-item:hover {
+      border-color: var(--accent1);
+      box-shadow: 0 0 0 3px rgba(108,99,255,.25);
+    }
+    .thumb-item img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      pointer-events: none;
+    }
+    /* Order badge */
+    .badge {
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      background: var(--accent1);
+      color: #fff;
+      font-size: .7rem;
+      font-weight: 700;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    /* Remove button */
+    .remove-btn {
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      background: rgba(0,0,0,.65);
+      border: none;
+      color: #fff;
+      font-size: .75rem;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: opacity .15s;
+    }
+    .thumb-item:hover .remove-btn { opacity: 1; }
+
+    /* Filename tooltip */
+    .thumb-name {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: rgba(0,0,0,.7);
+      font-size: .65rem;
+      color: #ccc;
+      padding: 3px 5px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      opacity: 0;
+      transition: opacity .15s;
+    }
+    .thumb-item:hover .thumb-name { opacity: 1; }
+
+    /* Drag ghost */
+    .sortable-ghost { opacity: .35; }
+    .sortable-chosen { transform: scale(1.05); z-index: 10; }
+
+    /* ── Controls ── */
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+      margin-top: 1.5rem;
+    }
+    #count-label {
+      color: var(--muted);
+      font-size: .9rem;
+      flex: 1;
+    }
+    .btn {
+      padding: .6rem 1.6rem;
+      border-radius: 8px;
+      border: none;
+      font-size: .95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity .2s, transform .1s;
+    }
+    .btn:active { transform: scale(.97); }
+    .btn:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent1), var(--accent2));
+      color: #fff;
+      min-width: 160px;
+    }
+    .btn-secondary {
+      background: var(--card);
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    /* Spinner inside button */
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255,255,255,.35);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Alert ── */
+    .alert {
+      border-radius: 8px;
+      padding: .9rem 1.2rem;
+      font-size: .9rem;
+      margin-top: 1rem;
+      display: none;
+    }
+    .alert.show { display: block; }
+    .alert-error {
+      background: rgba(248,113,113,.12);
+      border: 1px solid rgba(248,113,113,.35);
+      color: var(--danger);
+    }
+    .alert-info {
+      background: rgba(108,99,255,.12);
+      border: 1px solid rgba(108,99,255,.3);
+      color: var(--accent2);
+    }
+
+    /* ── Result section ── */
+    #result-section { display: none; }
+    #result-section .result-meta {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+    .meta-chip {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: .3rem .75rem;
+      font-size: .8rem;
+      color: var(--muted);
+    }
+    .meta-chip span { color: var(--success); font-weight: 600; }
+    #result-img-wrap {
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: #000;
+      max-height: 480px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #result-img {
+      max-width: 100%;
+      max-height: 480px;
+      object-fit: contain;
+      display: block;
+    }
+
+    /* Download button */
+    #download-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: .45rem;
+      margin-top: 1rem;
+      padding: .6rem 1.4rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--success);
+      font-weight: 600;
+      font-size: .9rem;
+      text-decoration: none;
+      transition: border-color .2s;
+    }
+    #download-btn:hover { border-color: var(--success); }
+  </style>
+</head>
+<body>
+
+  <!-- Loading overlay -->
+  <div id="loading-overlay">
+    <div class="big-spinner"></div>
+    <div id="loading-text">Stitching images…</div>
+    <div id="loading-sub">This may take 10–30 seconds depending on image size</div>
+  </div>
+
+  <header>
+    <h1>AR Image Stitcher</h1>
+    <p>Upload images in sequence — they'll be stitched left&nbsp;→&nbsp;right in that order</p>
+  </header>
+
+  <!-- Upload card -->
+  <div class="card">
+    <div class="card-title">1 · Upload Images</div>
+
+    <div id="drop-zone">
+      <input type="file" id="file-input" accept="image/*" multiple />
+      <div class="drop-icon">🖼️</div>
+      <p><strong>Click to browse</strong> or drag &amp; drop images here</p>
+      <p style="margin-top:.4rem">JPG, PNG, BMP · multiple files supported</p>
+    </div>
+
+    <!-- Sortable thumbnail grid -->
+    <div id="image-grid"></div>
+
+    <div class="controls">
+      <span id="count-label">No images selected</span>
+      <button class="btn btn-secondary" id="clear-btn" style="display:none" onclick="clearAll()">Clear all</button>
+      <button class="btn btn-primary" id="stitch-btn" disabled onclick="doStitch()">
+        Stitch Images
+      </button>
+    </div>
+
+    <div id="alert-box" class="alert"></div>
+  </div>
+
+  <!-- Hint card -->
+  <div class="card" id="hint-card" style="padding:1rem 1.5rem">
+    <p style="color:var(--muted); font-size:.85rem">
+      💡 <strong style="color:var(--text)">Tip:</strong> Drag thumbnails to reorder before stitching.
+      Images are stitched in the numbered sequence shown.
+    </p>
+  </div>
+
+  <!-- Result card -->
+  <div class="card" id="result-section">
+    <div class="card-title">2 · Stitched Result</div>
+    <div class="result-meta">
+      <div class="meta-chip">Width: <span id="res-w">—</span> px</div>
+      <div class="meta-chip">Height: <span id="res-h">—</span> px</div>
+      <div class="meta-chip">Images: <span id="res-count">—</span></div>
+    </div>
+    <div id="result-img-wrap">
+      <img id="result-img" src="" alt="Stitched panorama" />
+    </div>
+    <a id="download-btn" download="stitched_panorama.jpg" href="#">
+      ⬇ Download Panorama
+    </a>
+  </div>
+
+  <script>
+    // ── State ────────────────────────────────────────────────────────────────
+    // Each item: { id, file, objectURL }
+    let items = [];
+    let nextId = 0;
+
+    // ── DOM refs ─────────────────────────────────────────────────────────────
+    const grid       = document.getElementById('image-grid');
+    const fileInput  = document.getElementById('file-input');
+    const dropZone   = document.getElementById('drop-zone');
+    const stitchBtn  = document.getElementById('stitch-btn');
+    const clearBtn   = document.getElementById('clear-btn');
+    const countLabel = document.getElementById('count-label');
+    const alertBox   = document.getElementById('alert-box');
+    const resultSec  = document.getElementById('result-section');
+
+    // ── SortableJS ───────────────────────────────────────────────────────────
+    Sortable.create(grid, {
+      animation: 180,
+      ghostClass: 'sortable-ghost',
+      chosenClass: 'sortable-chosen',
+      onEnd() { syncOrderFromDOM(); refreshBadges(); }
+    });
+
+    // ── File input ───────────────────────────────────────────────────────────
+    fileInput.addEventListener('change', e => {
+      addFiles(Array.from(e.target.files));
+      fileInput.value = '';
+    });
+
+    // ── Drag-and-drop onto drop zone ─────────────────────────────────────────
+    dropZone.addEventListener('dragenter', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+    dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+    dropZone.addEventListener('dragleave', ()  => dropZone.classList.remove('drag-over'));
+    dropZone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+      addFiles(files);
+    });
+
+    // ── Core helpers ──────────────────────────────────────────────────────────
+    function addFiles(files) {
+      files.forEach(file => {
+        if (!file.type.startsWith('image/')) return;
+        const id  = nextId++;
+        const url = URL.createObjectURL(file);
+        items.push({ id, file, objectURL: url });
+
+        const el = document.createElement('div');
+        el.className = 'thumb-item';
+        el.dataset.id = id;
+        el.innerHTML = `
+          <img src="${url}" alt="${file.name}" loading="lazy" />
+          <div class="badge">${items.length}</div>
+          <button class="remove-btn" title="Remove" onclick="removeItem(${id}, event)">✕</button>
+          <div class="thumb-name">${file.name}</div>
+        `;
+        grid.appendChild(el);
+      });
+      refresh();
+    }
+
+    function removeItem(id, event) {
+      event.stopPropagation();
+      const idx = items.findIndex(i => i.id === id);
+      if (idx === -1) return;
+      URL.revokeObjectURL(items[idx].objectURL);
+      items.splice(idx, 1);
+      grid.querySelector(`[data-id="${id}"]`)?.remove();
+      refreshBadges();
+      refresh();
+    }
+
+    function clearAll() {
+      items.forEach(i => URL.revokeObjectURL(i.objectURL));
+      items = [];
+      grid.innerHTML = '';
+      refresh();
+      hideResult();
+      hideAlert();
+    }
+
+    // After SortableJS reorders DOM, sync the items array to match
+    function syncOrderFromDOM() {
+      const domIds = Array.from(grid.children).map(el => parseInt(el.dataset.id));
+      items = domIds.map(id => items.find(i => i.id === id)).filter(Boolean);
+    }
+
+    function refreshBadges() {
+      Array.from(grid.children).forEach((el, i) => {
+        const badge = el.querySelector('.badge');
+        if (badge) badge.textContent = i + 1;
+      });
+    }
+
+    function refresh() {
+      const n = items.length;
+      countLabel.textContent = n === 0 ? 'No images selected'
+                             : n === 1 ? '1 image selected'
+                             : `${n} images selected`;
+      stitchBtn.disabled = n < 2;
+      clearBtn.style.display = n > 0 ? '' : 'none';
+    }
+
+    // ── Stitch ────────────────────────────────────────────────────────────────
+    async function doStitch() {
+      syncOrderFromDOM();
+      hideAlert();
+      hideResult();
+
+      if (items.length < 2) {
+        showAlert('Please add at least 2 images.', 'error');
+        return;
+      }
+
+      stitchBtn.disabled = true;
+      stitchBtn.innerHTML = '<span class="spinner"></span> Stitching…';
+      document.getElementById('loading-overlay').classList.add('active');
+
+      const formData = new FormData();
+      items.forEach(item => formData.append('images', item.file, item.file.name));
+
+      try {
+        const resp = await fetch('/api/stitch', { method: 'POST', body: formData });
+        const data = await resp.json();
+
+        if (!resp.ok || data.error) {
+          showAlert(data.error || `Server error (${resp.status})`, 'error');
+        } else {
+          showResult(data.image, data.width, data.height, items.length);
+        }
+      } catch (err) {
+        showAlert('Network error — is the server running? (' + err.message + ')', 'error');
+      } finally {
+        document.getElementById('loading-overlay').classList.remove('active');
+        stitchBtn.disabled = items.length < 2;
+        stitchBtn.innerHTML = 'Stitch Images';
+      }
+    }
+
+    // ── Result helpers ────────────────────────────────────────────────────────
+    function showResult(b64, w, h, count) {
+      const src = 'data:image/jpeg;base64,' + b64;
+      document.getElementById('result-img').src = src;
+      document.getElementById('res-w').textContent = w;
+      document.getElementById('res-h').textContent = h;
+      document.getElementById('res-count').textContent = count;
+      document.getElementById('download-btn').href = src;
+      resultSec.style.display = 'block';
+      resultSec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function hideResult() {
+      resultSec.style.display = 'none';
+    }
+
+    // ── Alert helpers ─────────────────────────────────────────────────────────
+    function showAlert(msg, type) {
+      alertBox.textContent = msg;
+      alertBox.className = `alert show alert-${type}`;
+    }
+
+    function hideAlert() {
+      alertBox.className = 'alert';
+    }
+  </script>
+</body>
+</html>
